@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:xml/xml.dart';
 
 import '../../interactive_svg.dart';
-import '../entities/interactive_parser_delegate.dart';
 
 /// Shared helpers used by both [InteractiveParser] and [NetworkInteractiveParser].
 ///

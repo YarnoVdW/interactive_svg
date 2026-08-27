@@ -10,3 +10,4 @@ export 'src/entities/type.dart';
 export 'src/interactive_parser.dart';
 export 'src/interactive_svg_view.dart';
 export 'src/network_interactive_parser.dart';
+export 'src/raw_svg_parser.dart';
