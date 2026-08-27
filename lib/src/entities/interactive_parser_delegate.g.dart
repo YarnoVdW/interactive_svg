@@ -55,8 +55,7 @@ class _$InteractiveParseContextCWProxyImpl
     Object? root = const $CopyWithPlaceholder(),
     Object? document = const $CopyWithPlaceholder(),
     Object? viewBox = const $CopyWithPlaceholder(),
-  }) {
-    return InteractiveParseContext(
+  }) => InteractiveParseContext(
       root: root == const $CopyWithPlaceholder()
           ? _value.root
           // ignore: cast_nullable_to_non_nullable
@@ -70,7 +69,6 @@ class _$InteractiveParseContextCWProxyImpl
           // ignore: cast_nullable_to_non_nullable
           : viewBox as Rect?,
     );
-  }
 }
 
 extension $InteractiveParseContextCopyWith on InteractiveParseContext {

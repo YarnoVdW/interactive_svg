@@ -1,74 +1,68 @@
-/*
- Created by sonnts996 on 15/10/25.
- Copyright (c) 2025 . All rights reserved.
-*/
-
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart';
 
 import '../interactive_svg.dart';
 import 'parsers/bounds_parser_utilities.dart';
 import 'parsers/svg_parser_mixin.dart';
 
-/// Concrete [InteractiveParserDelegate] that loads an SVG asset and extracts
-/// interactive regions and hit-test bounds according to provided [InteractiveSelector]s.
+/// A [InteractiveParserDelegate] that loads an SVG from a remote URL.
 ///
 /// Usage:
-/// 1. Call [loadAssets] with a BuildContext to load and parse the SVG asset (reads viewBox).
-/// 2. Call [parseSvg] to obtain per-selector SVG fragments (the base SVG is stored under `null`).
-/// 3. Call [parseSvgBounds] with a target [Size] (usually the rendered widget size) to obtain
-///    path-based bounds for touchable selectors. Bounds are transformed according to the SVG
-///    viewBox, provided `fit` and `alignment`.
-class InteractiveParser extends InteractiveParserDelegate with SvgParserMixin {
-  /// Creates an [InteractiveParser] with the given [asset] and [selectors].
-  InteractiveParser({required this.asset, this.selectors = const []});
+/// 1. Call [loadAssets] with a [BuildContext] to download and parse the SVG.
+/// 2. Call [parseSvg] to obtain per-selector SVG fragments.
+/// 3. Call [parseSvgBounds] with the rendered widget [Size] to obtain
+///    path-based bounds for touchable selectors.
+///
+/// Throws an [Exception] when the server returns a non-200 status code.
+class NetworkInteractiveParser extends InteractiveParserDelegate
+    with SvgParserMixin {
+  /// Creates a [NetworkInteractiveParser] for [url].
+  ///
+  /// [url] must point directly to an SVG file (e.g. a CDN link).
+  /// [selectors] define the interactive regions to extract.
+  NetworkInteractiveParser({required this.url, this.selectors = const []});
 
-  /// The SVG asset path to load.
-  final String asset;
+  /// The URL of the remote SVG file.
+  final String url;
 
   /// The list of selectors defining interactive regions.
   final Iterable<InteractiveSelector> selectors;
 
   InteractiveParseContext? _currentContext;
-
-  /// The current parsing context, including the XML document and viewBox.
-  InteractiveParseContext? get currentContext => _currentContext;
-
   bool _lock = false;
 
   @override
-  bool get hasTouchableItem =>
-      selectors.any((e) => e.type == InteractiveType.touchable || e.type == InteractiveType.boundsOnly);
+  bool get hasTouchableItem => selectors.any(
+        (e) =>
+            e.type == InteractiveType.touchable ||
+            e.type == InteractiveType.boundsOnly,
+      );
 
-  /// Loads the SVG asset and parses its XML document.
+  /// Downloads the SVG from [url] and parses its XML document.
   ///
-  /// This method must be awaited before calling [parseSvg] or [parseSvgBounds].
+  /// Must be awaited before calling [parseSvg] or [parseSvgBounds].
   @override
   Future<void> loadAssets(BuildContext context) async {
-    if (_lock) {
-      return;
-    }
+    if (_lock) return;
     _lock = true;
     try {
-      final svgString = await DefaultAssetBundle.of(context).loadString(asset);
-      final document = XmlDocument.parse(svgString);
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode != 200) {
+        throw Exception(
+          'Failed to load SVG from $url: HTTP ${response.statusCode}',
+        );
+      }
+      final document = XmlDocument.parse(response.body);
       final svg = document.findElements('svg').firstOrNull;
       _currentContext = InteractiveParseContext(root: svg, document: document);
       parseViewBox(_currentContext!, (updated) => _currentContext = updated);
-    } catch (e) {
-      rethrow;
     } finally {
       _lock = false;
     }
   }
 
-
-  /// Parses the SVG and extracts regions based on the provided selectors.
-  ///
-  /// Returns a [RegionList] mapping each selector to an [SvgRegion]. The entry with key
-  /// `null` contains the full/base SVG content (with the selected groups removed).
-  /// Note: callers must call [loadAssets] prior to calling this method.
   @override
   RegionList parseSvg() {
     assert(!_lock, 'Please call loadAssets first and wait until it completes.');
@@ -81,29 +75,20 @@ class InteractiveParser extends InteractiveParserDelegate with SvgParserMixin {
     final regions = RegionList();
     final context = context_!;
 
-    /// Avoid editing on the original document
+    // Avoid editing the original document.
     final document = context.document!.copy();
     final root = context.root!.copy();
 
     for (final selector in selectors) {
       final group = selector(document);
-      if (group == null) {
-        continue;
-      }
+      if (group == null) continue;
       group.remove();
-      final region = convertLayerToSvg(selector, group, root);
-      regions[selector] = region;
+      regions[selector] = convertLayerToSvg(selector, group, root);
     }
     regions[null] = SvgRegion(selector: null, svg: document.toString());
     return regions;
   }
 
-
-  /// Parses the SVG and returns a map of selector -> [SvgBounds] (path) for touchable items.
-  ///
-  /// The returned paths are transformed to the target [size] according to [fit] and [alignment].
-  /// Only selectors with `type == InteractiveType.touchable || e.type == InteractiveType.boundsOnly` are considered. If a selector's
-  /// group is not found or no valid path can be constructed, that selector is skipped.
   @override
   BoundsList parseSvgBounds(
     Size size, {
@@ -129,9 +114,7 @@ class InteractiveParser extends InteractiveParserDelegate with SvgParserMixin {
     );
     for (final selector in touchableComponents) {
       final group = selector(document);
-      if (group == null) {
-        continue;
-      }
+      if (group == null) continue;
       final path = parseBoundsFromSvg(
         group,
         size: size,
@@ -139,7 +122,6 @@ class InteractiveParser extends InteractiveParserDelegate with SvgParserMixin {
         alignment: alignment,
         fit: fit,
       );
-
       if (path != null) {
         boundsRegions[selector] = SvgBounds(path: path, selector: selector);
       }
@@ -147,13 +129,11 @@ class InteractiveParser extends InteractiveParserDelegate with SvgParserMixin {
     return boundsRegions;
   }
 
-  /// Checks if this parser is different from [other].
-  ///
-  /// Returns true if the asset or selectors have changed.
+  /// Returns true when [url] or [selectors] differ from [other].
   @override
   bool isChanged(covariant InteractiveParserDelegate other) {
-    if (other is! InteractiveParser) return true;
-    return other.asset != asset ||
+    if (other is! NetworkInteractiveParser) return true;
+    return other.url != url ||
         !const DeepCollectionEquality().equals(other.selectors, selectors);
   }
 }

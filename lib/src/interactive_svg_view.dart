@@ -9,7 +9,6 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_svg/svg.dart';
 
 import '../interactive_svg.dart';
-import 'interactive_parser.dart';
 import 'lazy_bound_factory.dart';
 
 /// A widget that renders an SVG asset and exposes interactive regions via [InteractiveSelector].
@@ -100,6 +99,45 @@ class InteractiveSvgView extends StatefulWidget {
         key: key,
         parserDelegate: InteractiveParser(
           asset: svgAssets,
+          selectors: selectors,
+        ),
+        errorBuilder: errorBuilder,
+        placeholderBuilder: placeholderBuilder,
+        interactiveBuilder: interactiveBuilder,
+        onTap: onTap,
+        onTapOutside: onTapOutside,
+        fit: fit,
+        alignment: alignment,
+        markerBuilder: markerBuilder,
+        onBoundsCalculated: onBoundsCalculated,
+        shouldRebuildWhenBoundsCalculated: shouldRebuildWhenBoundsCalculated,
+      );
+
+  /// Creates an [InteractiveSvgView] that downloads an SVG from [url].
+  ///
+  /// [url] must point directly to an SVG file
+  /// [selectors] - optional list of selectors to parse and render as separate regions.
+  /// [interactiveBuilder] - builder used to wrap each region.
+  /// [onBoundsCalculated] - called when region bounds are computed.
+  factory InteractiveSvgView.fromWeb({
+    Key? key,
+    required String url,
+    Iterable<InteractiveSelector> selectors = const [],
+    ErrorBuilder? errorBuilder,
+    WidgetBuilder? placeholderBuilder,
+    InteractiveBuilder? interactiveBuilder,
+    void Function(InteractiveSelector selector)? onTap,
+    void Function()? onTapOutside,
+    BoxFit fit = BoxFit.contain,
+    Alignment alignment = Alignment.topLeft,
+    MarkerBuilder? markerBuilder,
+    void Function(BoundsList boundsData)? onBoundsCalculated,
+    bool shouldRebuildWhenBoundsCalculated = false,
+  }) =>
+      InteractiveSvgView(
+        key: key,
+        parserDelegate: NetworkInteractiveParser(
+          url: url,
           selectors: selectors,
         ),
         errorBuilder: errorBuilder,
