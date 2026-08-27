@@ -9,6 +9,7 @@ import 'package:xml/xml.dart';
 
 import '../interactive_svg.dart';
 import 'parsers/bounds_parser_utilities.dart';
+import 'parsers/svg_parser_mixin.dart';
 
 /// Concrete [InteractiveParserDelegate] that loads an SVG asset and extracts
 /// interactive regions and hit-test bounds according to provided [InteractiveSelector]s.
@@ -19,7 +20,7 @@ import 'parsers/bounds_parser_utilities.dart';
 /// 3. Call [parseSvgBounds] with a target [Size] (usually the rendered widget size) to obtain
 ///    path-based bounds for touchable selectors. Bounds are transformed according to the SVG
 ///    viewBox, provided `fit` and `alignment`.
-class InteractiveParser extends InteractiveParserDelegate {
+class InteractiveParser extends InteractiveParserDelegate with SvgParserMixin {
   /// Creates an [InteractiveParser] with the given [asset] and [selectors].
   InteractiveParser({required this.asset, this.selectors = const []});
 
@@ -54,7 +55,7 @@ class InteractiveParser extends InteractiveParserDelegate {
       final document = XmlDocument.parse(svgString);
       final svg = document.findElements('svg').firstOrNull;
       _currentContext = InteractiveParseContext(root: svg, document: document);
-      _parseViewBox(_currentContext!);
+      parseViewBox(_currentContext!, (updated) => _currentContext = updated);
     } catch (e) {
       rethrow;
     } finally {
@@ -62,27 +63,6 @@ class InteractiveParser extends InteractiveParserDelegate {
     }
   }
 
-  void _parseViewBox(InteractiveParseContext context) {
-    if (context.root == null) {
-      return;
-    }
-    final viewBox = context.root!.getAttribute('viewBox');
-    if (viewBox == null) {
-      return;
-    }
-    // Parse viewBox to get dimensions
-    final viewBoxParts =
-        viewBox.split(' ').map((s) => double.tryParse(s) ?? 0).toList();
-    if (viewBoxParts.length == 4) {
-      final rect = Rect.fromLTWH(
-        viewBoxParts[0],
-        viewBoxParts[1],
-        viewBoxParts[2],
-        viewBoxParts[3],
-      );
-      _currentContext = context.copyWith(viewBox: rect);
-    }
-  }
 
   /// Parses the SVG and extracts regions based on the provided selectors.
   ///
@@ -111,31 +91,13 @@ class InteractiveParser extends InteractiveParserDelegate {
         continue;
       }
       group.remove();
-      final region = _convertLayerToSvg(selector, group, root);
+      final region = convertLayerToSvg(selector, group, root);
       regions[selector] = region;
     }
     regions[null] = SvgRegion(selector: null, svg: document.toString());
     return regions;
   }
 
-  /// Converts a specific SVG layer to an [SvgRegion] for the given [selector].
-  ///
-  /// Returns an [SvgRegion] containing the SVG string for the selected layer.
-  SvgRegion _convertLayerToSvg(
-    InteractiveSelector selector,
-    XmlNode layer,
-    XmlElement root,
-  ) {
-    final defs =
-        layer.getElement('defs') == null ? root.getElement('defs') : null;
-    final element = XmlElement(
-      root.name.copy(),
-      root.attributes.map((e) => e.copy()).toList(),
-      [if (defs != null) defs.copy(), layer.copy()],
-      root.isSelfClosing,
-    );
-    return SvgRegion(selector: selector, svg: element.toString());
-  }
 
   /// Parses the SVG and returns a map of selector -> [SvgBounds] (path) for touchable items.
   ///

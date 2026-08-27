@@ -1,15 +1,33 @@
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:interactive_svg/interactive_svg.dart';
 import 'package:xml/xml.dart';
 
+import '../interactive_svg.dart';
 import 'parsers/bounds_parser_utilities.dart';
+import 'parsers/svg_parser_mixin.dart';
 
-class NetworkInteractiveParser extends InteractiveParserDelegate {
+/// A [InteractiveParserDelegate] that loads an SVG from a remote URL.
+///
+/// Usage:
+/// 1. Call [loadAssets] with a [BuildContext] to download and parse the SVG.
+/// 2. Call [parseSvg] to obtain per-selector SVG fragments.
+/// 3. Call [parseSvgBounds] with the rendered widget [Size] to obtain
+///    path-based bounds for touchable selectors.
+///
+/// Throws an [Exception] when the server returns a non-200 status code.
+class NetworkInteractiveParser extends InteractiveParserDelegate
+    with SvgParserMixin {
+  /// Creates a [NetworkInteractiveParser] for [url].
+  ///
+  /// [url] must point directly to an SVG file (e.g. a CDN link).
+  /// [selectors] define the interactive regions to extract.
   NetworkInteractiveParser({required this.url, this.selectors = const []});
 
+  /// The URL of the remote SVG file.
   final String url;
+
+  /// The list of selectors defining interactive regions.
   final Iterable<InteractiveSelector> selectors;
 
   InteractiveParseContext? _currentContext;
@@ -22,6 +40,9 @@ class NetworkInteractiveParser extends InteractiveParserDelegate {
             e.type == InteractiveType.boundsOnly,
       );
 
+  /// Downloads the SVG from [url] and parses its XML document.
+  ///
+  /// Must be awaited before calling [parseSvg] or [parseSvgBounds].
   @override
   Future<void> loadAssets(BuildContext context) async {
     if (_lock) return;
@@ -29,46 +50,43 @@ class NetworkInteractiveParser extends InteractiveParserDelegate {
     try {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode != 200) {
-        throw Exception('Failed to load SVG from $url: ${response.statusCode}');
+        throw Exception(
+          'Failed to load SVG from $url: HTTP ${response.statusCode}',
+        );
       }
-      final svgString = response.body;
-
-      final document = XmlDocument.parse(svgString);
+      final document = XmlDocument.parse(response.body);
       final svg = document.findElements('svg').firstOrNull;
       _currentContext = InteractiveParseContext(root: svg, document: document);
-      _parseViewBox(_currentContext!);
+      parseViewBox(_currentContext!, (updated) => _currentContext = updated);
     } finally {
       _lock = false;
     }
   }
 
-  void _parseViewBox(InteractiveParseContext context) {
-    if (context.root == null) {
-      return;
-    }
-    final viewBox = context.root!.getAttribute('viewBox');
-    if (viewBox == null) {
-      return;
-    }
-    // Parse viewBox to get dimensions
-    final viewBoxParts =
-        viewBox.split(' ').map((s) => double.tryParse(s) ?? 0).toList();
-    if (viewBoxParts.length == 4) {
-      final rect = Rect.fromLTWH(
-        viewBoxParts[0],
-        viewBoxParts[1],
-        viewBoxParts[2],
-        viewBoxParts[3],
-      );
-      _currentContext = context.copyWith(viewBox: rect);
-    }
-  }
-
   @override
-  bool isChanged(covariant InteractiveParserDelegate other) {
-    if (other is! NetworkInteractiveParser) return true;
-    return other.url != url ||
-        !const DeepCollectionEquality().equals(other.selectors, selectors);
+  RegionList parseSvg() {
+    assert(!_lock, 'Please call loadAssets first and wait until it completes.');
+
+    final context_ = _currentContext;
+    assert(context_ != null, 'Please call loadAssets first.');
+    assert(context_!.document != null, 'Please call loadAssets first.');
+    assert(context_!.root != null, 'Please call loadAssets first.');
+
+    final regions = RegionList();
+    final context = context_!;
+
+    // Avoid editing the original document.
+    final document = context.document!.copy();
+    final root = context.root!.copy();
+
+    for (final selector in selectors) {
+      final group = selector(document);
+      if (group == null) continue;
+      group.remove();
+      regions[selector] = convertLayerToSvg(selector, group, root);
+    }
+    regions[null] = SvgRegion(selector: null, svg: document.toString());
+    return regions;
   }
 
   @override
@@ -96,9 +114,7 @@ class NetworkInteractiveParser extends InteractiveParserDelegate {
     );
     for (final selector in touchableComponents) {
       final group = selector(document);
-      if (group == null) {
-        continue;
-      }
+      if (group == null) continue;
       final path = parseBoundsFromSvg(
         group,
         size: size,
@@ -106,7 +122,6 @@ class NetworkInteractiveParser extends InteractiveParserDelegate {
         alignment: alignment,
         fit: fit,
       );
-
       if (path != null) {
         boundsRegions[selector] = SvgBounds(path: path, selector: selector);
       }
@@ -114,48 +129,11 @@ class NetworkInteractiveParser extends InteractiveParserDelegate {
     return boundsRegions;
   }
 
+  /// Returns true when [url] or [selectors] differ from [other].
   @override
-  RegionList parseSvg() {
-    assert(!_lock, 'Please call loadAssets first and wait until it completes.');
-
-    final context_ = _currentContext;
-    assert(context_ != null, 'Please call loadAssets first.');
-    assert(context_!.document != null, 'Please call loadAssets first.');
-    assert(context_!.root != null, 'Please call loadAssets first.');
-
-    final regions = RegionList();
-    final context = context_!;
-
-    /// Avoid editing on the original document
-    final document = context.document!.copy();
-    final root = context.root!.copy();
-
-    for (final selector in selectors) {
-      final group = selector(document);
-      if (group == null) {
-        continue;
-      }
-      group.remove();
-      final region = _convertLayerToSvg(selector, group, root);
-      regions[selector] = region;
-    }
-    regions[null] = SvgRegion(selector: null, svg: document.toString());
-    return regions;
-  }
-
-  SvgRegion _convertLayerToSvg(
-    InteractiveSelector selector,
-    XmlNode layer,
-    XmlElement root,
-  ) {
-    final defs =
-        layer.getElement('defs') == null ? root.getElement('defs') : null;
-    final element = XmlElement(
-      root.name.copy(),
-      root.attributes.map((e) => e.copy()).toList(),
-      [if (defs != null) defs.copy(), layer.copy()],
-      root.isSelfClosing,
-    );
-    return SvgRegion(selector: selector, svg: element.toString());
+  bool isChanged(covariant InteractiveParserDelegate other) {
+    if (other is! NetworkInteractiveParser) return true;
+    return other.url != url ||
+        !const DeepCollectionEquality().equals(other.selectors, selectors);
   }
 }

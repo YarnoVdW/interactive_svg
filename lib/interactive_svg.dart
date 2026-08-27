@@ -7,4 +7,6 @@ export 'src/entities/svg_bounds_factory.dart';
 export 'src/entities/svg_regions.dart';
 export 'src/entities/svg_regions_details.dart';
 export 'src/entities/type.dart';
+export 'src/interactive_parser.dart';
 export 'src/interactive_svg_view.dart';
+export 'src/network_interactive_parser.dart';
